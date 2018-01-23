@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0px;
+        border: 0;
+        overflow: hidden; /*  Disable scrollbars */
+        display: block;  /* No floating content on sides */
+      }
+      </style>
+  </head>
+
+<body>
+</body>
+
+
+<script>
+  // create background canvas
+  let canvas = document.createElement('canvas');
+  canvas.setAttribute("id", "canvas");
+  canvas.setAttribute("style", "position:absolute; left:25px; top:25px; width: 1; height: 1");
+  document.body.appendChild(canvas);
+  // create logbook
+  let log_canvas = document.createElement('textarea');
+  log_canvas.setAttribute("id", "log_canvas");
+  log_canvas.setAttribute("cols", 50);
+  log_canvas.setAttribute("rows", 20);
+
+  document.body.appendChild(log_canvas);
+
+  function getMousePos(canvas, evt) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+        x: (evt.clientX - rect.left) / (rect.right - rect.left) * canvas.width,
+        y: (evt.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height
+    };
+  }
+  // Returns an object containing functions that will be linked to our wasm model
+  // This means that they can be called from Rust
+  function imports() {
+    var ctx = canvas.getContext("2d");
+    function clear_screen(width, height) {
+      canvas.width = width;
+      canvas.height = height;
+      ctx.fillStyle = "green";
+      ctx.fillRect(0, 0, canvas.width, canvas.height); // overwrites existing content!, so sets everything to black
+//      log_canvas.setAttribute("style", "position:absolute; left:" +(canvas.width+25*2) + "; top:25x");
+      log_canvas.setAttribute("style", "position:absolute; left:" + (canvas.width+25*2) + "px; top:25px; resize:none; ");
+      log_canvas.readOnly = true;
+    }
+    function draw_rectangle(top_left_x, top_left_y, width, height, red,green, blue) {
+      ctx.fillStyle = "rgb(" + red + ", " + green + ", " + blue +")";
+      ctx.fillRect(top_left_x, top_left_y, width, height);
+    }
+    function draw_circle(center_x, center_y, radius,
+      red,green, blue, opacity) {
+        ctx.fillStyle = "rgba(" + red + ", " + green + ", " + blue + ", " + opacity + ")";
+        ctx.beginPath();
+        ctx.arc(center_x,center_y, radius,0,2*Math.PI);
+        ctx.fill();
+    }
+    function draw_path_5_steps(pos1_x, pos1_y,
+      pos2_x, pos2_y,
+      pos3_x, pos3_y,
+      pos4_x, pos4_y,
+      pos5_x, pos5_y,
+      red,green, blue, opacity) {
+        ctx.fillStyle = "rgba(" + red + ", " + green + ", " + blue + ", " + opacity + ")";
+        ctx.beginPath();
+        ctx.moveTo(pos1_x,pos1_y);
+        ctx.lineTo(pos2_x,pos2_y);
+        ctx.lineTo(pos3_x,pos3_y);
+        ctx.lineTo(pos4_x,pos4_y);
+        ctx.lineTo(pos5_x,pos5_y);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // The real loading and running of our wasm starts here
+    let imports = { clear_screen, draw_rectangle, draw_circle, draw_path_5_steps};
+    return imports;
+  }
+  // Fetch and instantiate our wasm module
+  fetch("varidor-gc.wasm").then(response =>
+    response.arrayBuffer()
+  ).then(bytes =>
+    WebAssembly.instantiate(bytes, { env: imports() })
+  ).then(results => {
+    let module = {};
+    let mod = results.instance;
+    module.update = mod.exports.update;
+    module.reset = mod.exports.reset;
+    module.draw = mod.exports.draw;
+    module.on_click = mod.exports.on_click;
+    module.get_logbook = mod.exports.get_logbook;
+    module.alloc = mod.exports.alloc;
+    module.dealloc_str = mod.exports.dealloc_str;
+    module.memory = mod.exports.memory;
+
+
+    // Copy a nul-terminated string from the buffer pointed to.
+    // Consumes the old data and thus deallocated it.
+    function copyCStr(module, ptr) {
+      let orig_ptr = ptr;
+      const collectCString = function* () {
+        let memory = new Uint8Array(module.memory.buffer);
+        while (memory[ptr] !== 0) {
+          if (memory[ptr] === undefined) { throw new Error("Tried to read undef mem") }
+          yield memory[ptr]
+          ptr += 1
+        }
+      }
+
+      const buffer_as_u8 = new Uint8Array(collectCString())
+      const utf8Decoder = new TextDecoder("UTF-8");
+      const buffer_as_utf8 = utf8Decoder.decode(buffer_as_u8);
+      module.dealloc_str(orig_ptr);
+      return buffer_as_utf8
+    }
+
+    function getStr(module, ptr, len) {
+      const getData = function* (ptr, len) {
+        let memory = new Uint8Array(module.memory.buffer);
+        for (let index = 0; index < len; index++) {
+          if (memory[ptr] === undefined) { throw new Error(`Tried to read undef mem at ${ptr}`) }
+          yield memory[ptr + index]
+        }
+      }
+
+      const buffer_as_u8 = new Uint8Array(getData(ptr/8, len/8));
+      const utf8Decoder = new TextDecoder("UTF-8");
+      const buffer_as_utf8 = utf8Decoder.decode(buffer_as_u8);
+      return buffer_as_utf8;
+    }
+
+    function newString(module, str) {
+      const utf8Encoder = new TextEncoder("UTF-8");
+      let string_buffer = utf8Encoder.encode(str)
+      let len = string_buffer.length
+      let ptr = module.alloc(len+1)
+
+      let memory = new Uint8Array(module.memory.buffer);
+      for (i = 0; i < len; i++) {
+        memory[ptr+i] = string_buffer[i]
+      }
+
+      memory[ptr+len] = 0;
+
+      return ptr;
+    }
+
+    module.update_logbook = function() {
+          let outptr = module.get_logbook();
+          let result = copyCStr(module, outptr);
+          log_canvas.value = result;
+          console.log(result);
+    }
+
+
+    // Resizing
+    function resize() {
+      // We make the canvas somewhat smaller to get some zooming
+      //canvas.width = window.innerWidth * 0.8;
+      //canvas.height = window.innerHeight * 0.8;
+      //module.reset(canvas.width, canvas.height);
+    }
+    function click_function(event) {
+        var pos = getMousePos(canvas, event);
+        posx = pos.x;
+        posy = pos.y;
+        module.on_click(posx, posy);
+        module.draw();
+        module.update_logbook();
+    }
+    canvas.addEventListener("click", click_function);
+    window.addEventListener('resize', () => {
+      resize();
+    });
+    // Game loop
+    let start = null;
+    let prevTimestamp = null;
+    let drawAndUpdate = (timestamp) => {
+      // Initialization
+      if (!prevTimestamp) {
+        start = timestamp;
+        prevTimestamp = timestamp;
+        requestAnimationFrame(drawAndUpdate);
+        module.draw();
+        module.update_logbook();
+      }
+      //console.log(timestamp/1000);
+      //module.update(timestamp/1000);
+      //module.draw();
+      // Some bookkeeping
+      prevTimestamp = timestamp;
+      requestAnimationFrame(drawAndUpdate);
+    };
+    resize();
+    drawAndUpdate();
+  });
+  </script>
+  </body>
+</html>

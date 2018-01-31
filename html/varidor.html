@@ -19,17 +19,24 @@
 
 
 <script>
+  // create header
+  let header = document.createElement('canvas');
+  header.setAttribute("id", "create");
+  header.setAttribute("style", "position:absolute; left:25px; top:25px; width: 310px; height: 150px");
+  headerCtx = header.getContext("2d");
+  headerCtx.fillStyle = "green";
+  headerCtx.fillRect(0,0, 310, 150);
+  document.body.appendChild(header);
   // create background canvas
   let canvas = document.createElement('canvas');
   canvas.setAttribute("id", "canvas");
-  canvas.setAttribute("style", "position:absolute; left:25px; top:50px; width: 1; height: 1");
+  canvas.setAttribute("style", "position:absolute; left:25px; top:100px; width: 1; height: 1");
   document.body.appendChild(canvas);
   // create logbook
   let log_canvas = document.createElement('textarea');
   log_canvas.setAttribute("id", "log_canvas");
   log_canvas.setAttribute("cols", 50);
   log_canvas.setAttribute("rows", 20);
-
   document.body.appendChild(log_canvas);
 
   function getMousePos(canvas, evt) {
@@ -43,13 +50,14 @@
   // This means that they can be called from Rust
   function imports() {
     var ctx = canvas.getContext("2d");
+    var headerCtx = header.getContext("2d");
     function clear_screen(width, height) {
       canvas.width = width;
       canvas.height = height;
       ctx.fillStyle = "green";
-      ctx.fillRect(0, 0, canvas.width, canvas.height); // overwrites existing content!, so sets everything to black
+      ctx.fillRect(0, 0, width, height); // overwrites existing content!, so sets everything to black
 //      log_canvas.setAttribute("style", "position:absolute; left:" +(canvas.width+25*2) + "; top:25x");
-      log_canvas.setAttribute("style", "position:absolute; left:" + (canvas.width+25*2) + "px; top:50px; resize:none; ");
+      log_canvas.setAttribute("style", "position:absolute; left:" + (width+25*2) + "px; top:100px; resize:none; ");
       log_canvas.readOnly = true;
     }
     function draw_rectangle(top_left_x, top_left_y, width, height, red,green, blue) {
@@ -62,6 +70,12 @@
         ctx.beginPath();
         ctx.arc(center_x,center_y, radius,0,2*Math.PI);
         ctx.fill();
+        headerCtx.fillStyle = "rgba(" + red + ", " + green + ", " + blue + ", " + 1 + ")";
+        headerCtx.beginPath();
+        let cx = 310-35;
+        let cy = 35;
+        headerCtx.arc(cx,cy, radius,0,2*Math.PI);
+        headerCtx.fill();
     }
     function draw_path_5_steps(pos1_x, pos1_y,
       pos2_x, pos2_y,
@@ -78,10 +92,32 @@
         ctx.lineTo(pos5_x,pos5_y);
         ctx.closePath();
         ctx.fill();
+        headerCtx.fillStyle = "rgba(" + red + ", " + green + ", " + blue + ", " + 1 + ")";
+        headerCtx.beginPath();
+        let cx = 25;
+        let cy = 10;
+        headerCtx.moveTo(cx, cy);
+        headerCtx.lineTo(pos2_x-pos1_x+cx, pos2_y-pos1_y+cy);
+        headerCtx.lineTo(pos3_x-pos1_x+cx, pos3_y-pos1_y+cy);
+        headerCtx.lineTo(pos4_x-pos1_x+cx, pos4_y-pos1_y+cy);
+        headerCtx.lineTo(pos5_x-pos1_x+cx, pos5_y-pos1_y+cy);
+        headerCtx.closePath();
+        headerCtx.fill();
+    }
+    function draw_line_stroke(begin_x, begin_y, end_x, end_y, line_width, red,green, blue, opacity) {
+      ctx.strokeStyle = "rgba(" + red + ", " + green + ", " + blue + ", " + opacity + ")";
+      ctx.lineWidth=line_width;
+      ctx.beginPath();
+      ctx.moveTo(begin_x, begin_y);
+      ctx.lineTo(end_x, end_y);
+      ctx.stroke();
+    }
+    function alerting(x,y) {
+      alert("x:" + x + ", y: " + y)
     }
 
     // The real loading and running of our wasm starts here
-    let imports = { clear_screen, draw_rectangle, draw_circle, draw_path_5_steps};
+    let imports = { clear_screen, draw_rectangle, draw_circle, draw_path_5_steps, draw_line_stroke, alerting};
     return imports;
   }
   // Fetch and instantiate our wasm module
@@ -97,6 +133,10 @@
     module.draw = mod.exports.draw;
     module.on_click = mod.exports.on_click;
     module.get_logbook = mod.exports.get_logbook;
+    module.get_current_player_string = mod.exports.get_current_player_string;
+    module.get_current_player_color_string = mod.exports.get_current_player_color_string;
+    module.get_walls_black = mod.exports.get_walls_black;
+    module.get_walls_white = mod.exports.get_walls_white;
     module.alloc = mod.exports.alloc;
     module.dealloc_str = mod.exports.dealloc_str;
     module.memory = mod.exports.memory;
@@ -121,7 +161,6 @@
       module.dealloc_str(orig_ptr);
       return buffer_as_utf8
     }
-
     function getStr(module, ptr, len) {
       const getData = function* (ptr, len) {
         let memory = new Uint8Array(module.memory.buffer);
@@ -136,7 +175,6 @@
       const buffer_as_utf8 = utf8Decoder.decode(buffer_as_u8);
       return buffer_as_utf8;
     }
-
     function newString(module, str) {
       const utf8Encoder = new TextEncoder("UTF-8");
       let string_buffer = utf8Encoder.encode(str)
@@ -157,7 +195,29 @@
           let outptr = module.get_logbook();
           let result = copyCStr(module, outptr);
           log_canvas.value = result;
-          console.log(result);
+    }
+    module.update_header = function() {
+        let outptr = module.get_current_player_string();
+        let player_string = copyCStr(module, outptr);
+        outptr = module.get_current_player_color_string();
+        let player_color = copyCStr(module, outptr);
+        headerCtx.fillStyle = "green";
+        headerCtx.fillRect(0,0, 310, 150);
+        headerCtx.font = "30px Comic Sans MS";
+        headerCtx.fillStyle = player_color
+        headerCtx.textAlign = "center";
+        headerCtx.fillText("Player Turn", header.width/2, header.height/5);
+        headerCtx.fillText(player_string, header.width/2, header.height/5*2.5);
+        let walls_white = module.get_walls_white();
+        let walls_black = module.get_walls_black();
+        for (i = 0; i < walls_white; i++) {
+          headerCtx.fillStyle = "gray";
+          headerCtx.fillRect(10+10*i,60, 5, 25);
+        }
+        for (i = 0; i < walls_black; i++) {
+          headerCtx.fillStyle = "gray";
+          headerCtx.fillRect(285-10*i,60, 5, 25);
+        }
     }
 
 
@@ -173,6 +233,7 @@
         posx = pos.x;
         posy = pos.y;
         module.on_click(posx, posy);
+        module.update_header();
         module.draw();
         module.update_logbook();
     }
@@ -189,6 +250,7 @@
         start = timestamp;
         prevTimestamp = timestamp;
         requestAnimationFrame(drawAndUpdate);
+        module.update_header();
         module.draw();
         module.update_logbook();
       }

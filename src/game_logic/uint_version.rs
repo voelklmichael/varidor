@@ -1,6 +1,5 @@
 use super::BoardTrait;
-const BOARDSIZE: usize = 5;
-
+use BOARDSIZE;
 #[derive(Clone, Copy, PartialEq)]
 pub enum Directions {
     Up,
@@ -69,10 +68,11 @@ pub struct Board {
     walls_is_placed: [WallIsPlaced; 2 * BOARDSIZE * (BOARDSIZE - 1)],
     intersections_is_placed: [IntersectionIsPlaced; (BOARDSIZE - 1) * (BOARDSIZE - 1)],
     logbook: Vec<String>,
+    pub wall_index_selected: Option<(usize, usize, bool)>,
 }
 
 impl Board {
-    fn wall_lookup(
+    pub fn wall_lookup(
         &self,
         lower_left_column: usize,
         lower_left_row: usize,
@@ -98,7 +98,7 @@ impl Board {
                 [lower_left_row + lower_left_column * (BOARDSIZE - 1) + BOARDSIZE * (BOARDSIZE - 1)]
         }
     }
-    fn intersectionwall_lookup(
+    pub fn intersectionwall_lookup(
         &self,
         lower_left_column: usize,
         lower_left_row: usize,
@@ -146,6 +146,7 @@ pub enum PlaceWallErrorType {
     IntesectionAlreadyThere,
     PlayerBlocked,
     NoMoreWalls,
+    NotConnected,
 }
 
 pub enum WallPlacementDirections {
@@ -161,6 +162,15 @@ impl BoardTrait for Board {
     type PlaceWallErrorType = PlaceWallErrorType;
     type WallPlacementDirections = WallPlacementDirections;
     // create a new game
+    fn get_current_player_color_string(&self) -> &'static str {
+        match self.get_current_player() {
+            PlayerIndices::White => "white",
+            PlayerIndices::Black => "black",
+        }
+    }
+    fn get_current_player_string(&self) -> &'static str {
+        self.get_current_player().to_string()
+    }
     fn get_logbook(&self) -> &Vec<String> {
         &self.logbook
     }
@@ -194,6 +204,7 @@ impl BoardTrait for Board {
             intersections_is_placed: [IntersectionIsPlaced::IsEmpty;
                 (BOARDSIZE - 1) * (BOARDSIZE - 1)],
             logbook: vec!["Game started".to_string()],
+            wall_index_selected: None,
         };
         board.update_shortest_paths();
         board
@@ -444,7 +455,7 @@ impl BoardTrait for Board {
 
         // check if second wall fields are inside boundary and if intersection is empty,
         // if everything is ok, place two walls
-        match (direction, wall_direction) {
+        let result = match (direction, wall_direction) {
             (Up, WallPlacementDirections::Left) => {
                 if current_column == COLUMN_MIN {
                     Some(PlaceWallErrorType::BoardBoundary)
@@ -880,6 +891,13 @@ impl BoardTrait for Board {
                     }
                 }
             }
+        };
+        match result {
+            None => {
+                self.next_player();
+                None
+            }
+            Some(x) => Some(x),
         }
     }
     fn move_player_by_field(
@@ -903,7 +921,7 @@ impl BoardTrait for Board {
             match self.fields_connected(current_field, *direction.unwrap()) {
                 Ok(_) => {
                     self.set_player_field(player, new_field);
-                    if Board::is_final_field(self.get_player_field(player), player) {
+                    if Board::is_final_field(new_field, player) {
                         self.append_logbook(
                             "player ".to_string() + &player.to_string()
                                 + &" has won the game!".to_string(),
@@ -914,6 +932,12 @@ impl BoardTrait for Board {
                 }
                 Err(x) => Some(x),
             }
+        }
+    }
+    fn get_player_wall_count(&self, player: Self::PlayerIndices) -> u8 {
+        match player {
+            PlayerIndices::Black => self.black_number_of_walls,
+            PlayerIndices::White => self.white_number_of_walls,
         }
     }
 }

@@ -10,6 +10,9 @@ pub trait BoardTrait {
     type MoveErrorType;
     type PlaceWallErrorType;
     type WallPlacementDirections;
+    fn get_current_player_string(&self) -> &'static str;
+    fn get_player_wall_count(&self, player: Self::PlayerIndices) -> u8;
+    fn get_current_player_color_string(&self) -> &'static str;
     fn next_player(&mut self);
     fn get_logbook(&self) -> &Vec<String>;
     fn append_logbook(&mut self, new_line: String);

@@ -8,7 +8,7 @@ pub use self::game_logic::*;
 
 use std::sync::Mutex;
 
-const BOARDSIZE: u64 = 5;
+const BOARDSIZE: usize = 5;
 
 lazy_static! {
   static ref DATA: Mutex<Board> = Mutex::new(Board::new());

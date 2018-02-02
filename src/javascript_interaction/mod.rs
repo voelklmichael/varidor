@@ -4,10 +4,10 @@ use std::os::raw::{c_char, c_double};
 use std::ffi::CString;
 
 use super::{BOARDSIZE, DATA};
-use super::game_logic::*;
+use super::board_square::*;
 
-const FIELD_WIDTH: f64 = 50.;
-const WALL_WIDTH: f64 = 10.;
+const FIELD_WIDTH: f64 = 50. * 5. / BOARDSIZE as f64;
+const WALL_WIDTH: f64 = 10. * 5. / BOARDSIZE as f64;
 const DISTANCE: f64 = FIELD_WIDTH + WALL_WIDTH;
 const BOARD_SIZE: f64 = DISTANCE * BOARDSIZE as f64 + WALL_WIDTH;
 // These functions are provided by the runtime
@@ -58,7 +58,7 @@ extern "C" {
         blue: c_double,
         opacity: c_double,
     );
-    fn alerting(x: c_double, y: c_double);
+//fn alerting(x: c_double, y: c_double);
 }
 //#[no_mangle]
 //pub extern "C" fn reset(width: c_double, height: c_double) {}
@@ -67,23 +67,30 @@ extern "C" {
 pub fn get_walls_black() -> c_double {
     DATA.lock()
         .unwrap()
-        .get_player_wall_count(PlayerIndices::Black) as c_double
+        .board
+        .get_player_data(TwoPlayerIndices::Black)
+        .get_wall_count() as c_double
 }
 #[no_mangle]
 pub fn get_walls_white() -> c_double {
     DATA.lock()
         .unwrap()
-        .get_player_wall_count(PlayerIndices::White) as c_double
+        .board
+        .get_player_data(TwoPlayerIndices::White)
+        .get_wall_count() as c_double
 }
 #[no_mangle]
 pub fn get_current_player_string() -> *mut c_char {
-    let s = DATA.lock().unwrap().get_current_player_string();
+    let s = DATA.lock().unwrap().get_current_player().to_string();
     let s = CString::new(s.to_string()).unwrap();
     s.into_raw()
 }
 #[no_mangle]
 pub fn get_current_player_color_string() -> *mut c_char {
-    let s = DATA.lock().unwrap().get_current_player_color_string();
+    let s = DATA.lock()
+        .unwrap()
+        .get_current_player()
+        .get_color_as_string();
     let s = CString::new(s.to_string()).unwrap();
     s.into_raw()
 }
@@ -99,7 +106,7 @@ pub extern "C" fn on_click(pos_x: c_double, pos_y: c_double) {
             && y - (y / DISTANCE).floor() * DISTANCE < FIELD_WIDTH
         {
             let mut data = DATA.lock().unwrap();
-            data.move_player_by_field(FieldIndices {
+            data.move_player_by_field(FieldIndexSquare {
                 column: column,
                 row: row,
             }).map(|error| data.append_logbook(error.to_string().to_string()));
@@ -125,34 +132,34 @@ pub extern "C" fn on_click(pos_x: c_double, pos_y: c_double) {
                     let max_row = std::cmp::max(row, row_before);
                     let current_player = data.get_current_player();
                     let error = if dir_is_left_or_right != dir_is_left_or_right_before {
-                        Some(PlaceWallErrorType::NotConnected)
+                        Some(WallPlacmentError::NotConnected)
                     } else if max_column == min_column && min_row + 1 == max_row {
-                        data.place_wall(
+                        data.board.place_wall(
                             current_player,
-                            FieldIndices {
+                            FieldIndexSquare {
                                 column: min_column,
                                 row: min_row,
                             },
-                            Directions::Right,
-                            WallPlacementDirections::Left,
+                            DirectionsSquare::Right,
+                            WallDirections::Left,
                         )
                     } else if max_column == min_column + 1 && min_row == max_row {
-                        data.place_wall(
+                        data.board.place_wall(
                             current_player,
-                            FieldIndices {
+                            FieldIndexSquare {
                                 column: min_column,
                                 row: min_row,
                             },
-                            Directions::Up,
-                            WallPlacementDirections::Right,
+                            DirectionsSquare::Up,
+                            WallDirections::Right,
                         )
                     } else {
-                        Some(PlaceWallErrorType::NotConnected)
+                        Some(WallPlacmentError::NotConnected)
                     };
                     match error {
-                        None => {}
+                        None => data.next_player(),
                         Some(err) => {
-                            data.append_logbook(format!("{:?}", err));
+                            data.append_logbook(err.to_string().to_string());
                         }
                     }
                 }
@@ -173,6 +180,7 @@ pub fn get_logbook() -> *mut c_char {
 pub unsafe extern "C" fn draw() {
     // reset screen
     clear_screen(BOARD_SIZE, BOARD_SIZE);
+
     let data = DATA.lock().unwrap();
     // draw fields
     for column_index in 0..BOARDSIZE {
@@ -197,7 +205,14 @@ pub unsafe extern "C" fn draw() {
     let wall_color = (100, 100, 100);
     for column_index in 0..BOARDSIZE as usize - 1 {
         for row_index in 0..BOARDSIZE as usize - 0 {
-            if data.wall_lookup(column_index, row_index, true) == WallIsPlaced::IsWall {
+            if data.board.wall_lookup_unsafe(
+                FieldIndexSquare {
+                    column: column_index,
+                    row: row_index,
+                },
+                true,
+            ) == WallPlaced::IsWall
+            {
                 draw_rectangle(
                     column_index as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH,
                     row_index as f64 * DISTANCE + WALL_WIDTH,
@@ -210,9 +225,17 @@ pub unsafe extern "C" fn draw() {
             }
         }
     }
+    // draw walls vertically
     for column_index in 0..BOARDSIZE as usize - 0 {
         for row_index in 0..BOARDSIZE as usize - 1 {
-            if data.wall_lookup(column_index, row_index, false) == WallIsPlaced::IsWall {
+            if data.board.wall_lookup_unsafe(
+                FieldIndexSquare {
+                    column: column_index,
+                    row: row_index,
+                },
+                false,
+            ) == WallPlaced::IsWall
+            {
                 draw_rectangle(
                     column_index as f64 * DISTANCE + WALL_WIDTH,
                     row_index as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH,
@@ -225,10 +248,13 @@ pub unsafe extern "C" fn draw() {
             }
         }
     }
+    // draw wall crossings
     for column_index in 0..BOARDSIZE as usize - 1 {
         for row_index in 0..BOARDSIZE as usize - 1 {
-            if data.intersectionwall_lookup(column_index, row_index)
-                == IntersectionIsPlaced::IsPlaced
+            if data.board.croosing_lookup_unsafe(FieldIndexSquare {
+                column: column_index,
+                row: row_index,
+            }) == WallCrossing::IsWallCrossing
             {
                 draw_rectangle(
                     column_index as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH,
@@ -242,6 +268,7 @@ pub unsafe extern "C" fn draw() {
             }
         }
     }
+
     // draw selected wall
     let wall_selected_color = (218, 165, 32);
     let selected_before = data.wall_index_selected;
@@ -270,59 +297,39 @@ pub unsafe extern "C" fn draw() {
         }
     }
     // add shortest path
-    let add_shortest_path = |player, final_direction, red, green, blue, line_thickness, offset| {
-        let shortest_paths = data.get_shortest_pathes(player);
+    let add_shortest_path = |player, red, green, blue, line_thickness, offset| {
+        let shortest_paths = data.board.get_player_data(player).get_shortest_paths();
         for path in shortest_paths {
-            let mut path = path;
-            let last = path[path.len() - 1];
-            path.push(Board::get_adjacent_field(last, final_direction).unwrap());
-            for i in 0..path.len() - 2 {
-                let current_field = path[i];
-                let field = path[i + 1];
+            let mut previous_field = data.board.get_current_field(player);
+            for &(next_field, _) in path {
                 draw_line_stroke(
-                    current_field.column as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
-                    current_field.row as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
-                    field.column as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
-                    field.row as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
+                    previous_field.column as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2.
+                        + offset,
+                    previous_field.row as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
+                    next_field.column as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
+                    next_field.row as f64 * DISTANCE + WALL_WIDTH + FIELD_WIDTH / 2. + offset,
                     line_thickness,
                     red as f64,
                     green as f64,
                     blue as f64,
                     0.8,
                 );
+                previous_field = next_field;
             }
         }
     };
-    let player = PlayerIndices::White;
-    let final_direction = Directions::Up;
+    let player = TwoPlayerIndices::White;
     let (red, green, blue) = (255, 255, 255);
     let line_thickness = 5.;
     let offset = -5.;
-    add_shortest_path(
-        player,
-        final_direction,
-        red,
-        green,
-        blue,
-        line_thickness,
-        offset,
-    );
-    let player = PlayerIndices::Black;
-    let final_direction = Directions::Down;
+    add_shortest_path(player, red, green, blue, line_thickness, offset);
+    let player = TwoPlayerIndices::Black;
     let (red, green, blue) = (0, 0, 0);
-    let line_thickness = 5.;
-    let offset = 5.;
-    add_shortest_path(
-        player,
-        final_direction,
-        red,
-        green,
-        blue,
-        line_thickness,
-        offset,
-    );
+    let line_thickness = 2.;
+    let offset = 0.;
+    add_shortest_path(player, red, green, blue, line_thickness, offset);
     // draw player black
-    let pos_black = data.get_player_field(PlayerIndices::Black);
+    let pos_black = data.board.get_current_field(TwoPlayerIndices::Black);
     draw_circle(
         WALL_WIDTH + DISTANCE * pos_black.column as f64 + FIELD_WIDTH / 2.,
         WALL_WIDTH + DISTANCE * pos_black.row as f64 + FIELD_WIDTH / 2.,
@@ -333,7 +340,7 @@ pub unsafe extern "C" fn draw() {
         0.8,
     );
     // draw player white
-    let pos_white = data.get_player_field(PlayerIndices::White);
+    let pos_white = data.board.get_current_field(TwoPlayerIndices::White);
     let white_x = pos_white.column as f64;
     let white_y = pos_white.row as f64;
     let mut pos_x = [0f64; 5];

@@ -117,7 +117,7 @@
     }
 
     // The real loading and running of our wasm starts here
-    let imports = { clear_screen, draw_rectangle, draw_circle, draw_path_5_steps, draw_line_stroke, alerting};
+    let imports = { clear_screen, draw_rectangle, draw_circle, draw_path_5_steps, draw_line_stroke};
     return imports;
   }
   // Fetch and instantiate our wasm module
@@ -242,27 +242,10 @@
       resize();
     });
     // Game loop
-    let start = null;
-    let prevTimestamp = null;
-    let drawAndUpdate = (timestamp) => {
-      // Initialization
-      if (!prevTimestamp) {
-        start = timestamp;
-        prevTimestamp = timestamp;
-        requestAnimationFrame(drawAndUpdate);
-        module.update_header();
-        module.draw();
-        module.update_logbook();
-      }
-      //console.log(timestamp/1000);
-      //module.update(timestamp/1000);
-      //module.draw();
-      // Some bookkeeping
-      prevTimestamp = timestamp;
-      requestAnimationFrame(drawAndUpdate);
-    };
+    module.update_header();
+    module.draw();
+    module.update_logbook();
     resize();
-    drawAndUpdate();
   });
   </script>
   </body>

@@ -5,6 +5,7 @@ authors = ["Michael <v.mi@gmx.de>"]
 
 [dependencies]
 lazy_static = "*"
+num-traits = "*"
 
 [lib]
 path = "src/lib.rs"
